@@ -20,6 +20,7 @@ final class StreetLifeView extends View {
     };
 
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Path path = new Path();
     private final Random random = new Random(23);
     private final float density;
     private final float[][] buildingHeight = new float[37][37];
@@ -29,20 +30,19 @@ final class StreetLifeView extends View {
     private float playerZ;
     private float moveX;
     private float moveZ;
-    private float missionX = 7f;
-    private float missionZ = 5f;
+    private float missionX = 6f;
+    private float missionZ = 4f;
     private float elapsed;
     private long lastFrameNanos;
     private int missions;
-    private int health = 100;
     private int cash;
-    private int attackCooldown;
     private int messageFrames = 240;
     private String message = "Find the gold marker and tap ACTION";
     private float joystickX;
     private float joystickY;
     private boolean joystickActive;
     private boolean actionPressed;
+    private boolean actionPending;
     private int joystickPointer = -1;
     private int actionPointer = -1;
 
@@ -76,14 +76,17 @@ final class StreetLifeView extends View {
 
     private void update(float delta) {
         if (messageFrames > 0) messageFrames--;
-        if (attackCooldown > 0) attackCooldown--;
         float magnitude = (float) Math.sqrt(moveX * moveX + moveZ * moveZ);
         if (magnitude > 0.08f) {
-            playerX = clamp(playerX + moveX / magnitude * PLAYER_SPEED * delta, -WORLD_LIMIT + 1, WORLD_LIMIT - 1);
-            playerZ = clamp(playerZ + moveZ / magnitude * PLAYER_SPEED * delta, -WORLD_LIMIT + 1, WORLD_LIMIT - 1);
+            float nextX = clamp(playerX + moveX / magnitude * PLAYER_SPEED * delta,
+                    -WORLD_LIMIT + 1, WORLD_LIMIT - 1);
+            float nextZ = clamp(playerZ + moveZ / magnitude * PLAYER_SPEED * delta,
+                    -WORLD_LIMIT + 1, WORLD_LIMIT - 1);
+            if (canWalk(nextX, playerZ)) playerX = nextX;
+            if (canWalk(playerX, nextZ)) playerZ = nextZ;
         }
-        if (actionPressed) {
-            actionPressed = false;
+        if (actionPending) {
+            actionPending = false;
             if (distance(playerX, playerZ, missionX, missionZ) < 1.65f) {
                 missions++;
                 cash += 100 + missions * 25;
@@ -100,7 +103,7 @@ final class StreetLifeView extends View {
 
     private void drawWorld(Canvas canvas) {
         canvas.drawColor(0xff9cc9a1);
-        float scale = Math.min(getWidth() / 900f, getHeight() / 500f) * density;
+        float scale = Math.min(getWidth() / 900f, getHeight() / 500f);
         scale = Math.max(scale, 0.75f);
         canvas.save();
         canvas.translate(getWidth() / 2f - (playerX - playerZ) * TILE_WIDTH * scale / 2f,
@@ -148,32 +151,32 @@ final class StreetLifeView extends View {
         float halfW = TILE_WIDTH * 0.37f;
         float halfH = TILE_HEIGHT * 0.36f;
         float top = y - height * TILE_HEIGHT * 0.85f;
-        Path leftWall = new Path();
-        leftWall.moveTo(x - halfW, y);
-        leftWall.lineTo(x, y + halfH);
-        leftWall.lineTo(x, top + halfH);
-        leftWall.lineTo(x - halfW, top);
-        leftWall.close();
+        path.rewind();
+        path.moveTo(x - halfW, y);
+        path.lineTo(x, y + halfH);
+        path.lineTo(x, top + halfH);
+        path.lineTo(x - halfW, top);
+        path.close();
         paint.setColor(darken(roofColor, 0.72f));
-        canvas.drawPath(leftWall, paint);
+        canvas.drawPath(path, paint);
 
-        Path rightWall = new Path();
-        rightWall.moveTo(x + halfW, y);
-        rightWall.lineTo(x, y + halfH);
-        rightWall.lineTo(x, top + halfH);
-        rightWall.lineTo(x + halfW, top);
-        rightWall.close();
+        path.rewind();
+        path.moveTo(x + halfW, y);
+        path.lineTo(x, y + halfH);
+        path.lineTo(x, top + halfH);
+        path.lineTo(x + halfW, top);
+        path.close();
         paint.setColor(darken(roofColor, 0.86f));
-        canvas.drawPath(rightWall, paint);
+        canvas.drawPath(path, paint);
 
-        Path roof = new Path();
-        roof.moveTo(x, top - halfH);
-        roof.lineTo(x + halfW, top);
-        roof.lineTo(x, top + halfH);
-        roof.lineTo(x - halfW, top);
-        roof.close();
+        path.rewind();
+        path.moveTo(x, top - halfH);
+        path.lineTo(x + halfW, top);
+        path.lineTo(x, top + halfH);
+        path.lineTo(x - halfW, top);
+        path.close();
         paint.setColor(roofColor);
-        canvas.drawPath(roof, paint);
+        canvas.drawPath(path, paint);
 
         paint.setColor(0xff453a32);
         canvas.drawRect(x - 3f, y - 10f, x + 3f, y - 2f, paint);
@@ -224,11 +227,6 @@ final class StreetLifeView extends View {
         paint.setFakeBoldText(false);
         paint.setColor(0xfff2f1e8);
         canvas.drawText("MISSIONS  " + missions + "      CASH  $" + cash, 27f, 54f, paint);
-        paint.setColor(0xffd9554e);
-        canvas.drawRoundRect(new RectF(27f, 64f, 207f, 71f), 4f, 4f, paint);
-        paint.setColor(0xff62d17a);
-        canvas.drawRoundRect(new RectF(27f, 64f, 27f + 180f * health / 100f, 71f), 4f, 4f, paint);
-
         if (messageFrames > 0) {
             paint.setColor(0xb814201f);
             canvas.drawRoundRect(new RectF(width / 2f - 170f, 14f, width / 2f + 170f, 48f), 12f, 12f, paint);
@@ -296,7 +294,8 @@ final class StreetLifeView extends View {
             }
             if (pointer == actionPointer || action == MotionEvent.ACTION_CANCEL) {
                 actionPointer = -1;
-                actionPressed = action != MotionEvent.ACTION_CANCEL;
+                actionPressed = false;
+                actionPending = action != MotionEvent.ACTION_CANCEL;
             }
             performClick();
             return true;
@@ -323,8 +322,8 @@ final class StreetLifeView extends View {
         }
         joystickX = dx / range;
         joystickY = dy / range;
-        moveX = (joystickX - joystickY) * 0.5f;
-        moveZ = (joystickX + joystickY) * 0.5f;
+        moveX = (joystickX + joystickY) * 0.5f;
+        moveZ = (joystickY - joystickX) * 0.5f;
         joystickActive = true;
     }
 
@@ -342,20 +341,24 @@ final class StreetLifeView extends View {
                 && Math.floorMod(z, 6) != 1 && Math.floorMod(z, 6) != 5;
     }
 
-    private static void diamond(Canvas canvas, float x, float y, int color) {
-        Path path = new Path();
+    private void diamond(Canvas canvas, float x, float y, int color) {
+        path.rewind();
         path.moveTo(x, y - TILE_HEIGHT / 2f);
         path.lineTo(x + TILE_WIDTH / 2f, y);
         path.lineTo(x, y + TILE_HEIGHT / 2f);
         path.lineTo(x - TILE_WIDTH / 2f, y);
         path.close();
-        paintStatic(canvas, path, color);
+        paint.setColor(color);
+        canvas.drawPath(path, paint);
     }
 
-    private static void paintStatic(Canvas canvas, Path path, int color) {
-        Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
-        p.setColor(color);
-        canvas.drawPath(path, p);
+    private boolean canWalk(float x, float z) {
+        int cellX = Math.round(x);
+        int cellZ = Math.round(z);
+        if (cellX < -WORLD_LIMIT || cellX > WORLD_LIMIT || cellZ < -WORLD_LIMIT || cellZ > WORLD_LIMIT) {
+            return false;
+        }
+        return buildingHeight[cellX + WORLD_LIMIT][cellZ + WORLD_LIMIT] == 0f;
     }
 
     private static int darken(int color, float amount) {
